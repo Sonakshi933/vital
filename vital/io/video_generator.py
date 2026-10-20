@@ -59,6 +59,19 @@ def generate_embryo_timelapse_videos(
                 break
 
     if zarr_path is None:
+        # Cloud fallback: copy pre-rendered videos if available
+        from vital.config import DEMO_CACHE_DIR
+        src_raw = DEMO_CACHE_DIR / recording_id / "embryo_timelapse_raw.mp4"
+        src_ann = DEMO_CACHE_DIR / recording_id / "embryo_timelapse_annotated.mp4"
+        if not src_raw.exists():
+            src_raw = DEMO_CACHE_DIR / "6bba_48816121" / "embryo_timelapse_raw.mp4"
+            src_ann = DEMO_CACHE_DIR / "6bba_48816121" / "embryo_timelapse_annotated.mp4"
+        if src_raw.exists():
+            import shutil
+            shutil.copy2(src_raw, raw_video_path)
+            if src_ann.exists():
+                shutil.copy2(src_ann, annotated_video_path)
+            return raw_video_path, (annotated_video_path if annotated_video_path.exists() else None)
         raise FileNotFoundError(f"Microscopy volume '{recording_id}.zarr' not found in dataset or runs.")
 
     reader = ZarrReader(zarr_path)

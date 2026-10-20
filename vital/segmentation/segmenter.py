@@ -80,6 +80,8 @@ class CellposeSegmenter(BaseSegmenter):
         eval_result = self.model.eval(
             volume_3d,
             channels=[0, 0],
+            channel_axis=None,
+            z_axis=0,
             do_3D=self.do_3d,
             diameter=diameter,
             anisotropy=anisotropy,

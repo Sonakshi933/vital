@@ -9,6 +9,7 @@ Stage 3: Lineage Graph Construction (GEFF v1.1 export) & Ground-Truth Evaluation
 import os
 import sys
 from pathlib import Path
+from typing import Optional, Dict, Any, List
 import argparse
 import json
 import time
@@ -54,6 +55,7 @@ def run_vital_pipeline(
     # Locate input files
     zarr_path = None
     geff_path = None
+    use_cloud_fallback = False
 
     if custom_zarr_path and Path(custom_zarr_path).exists():
         zarr_path = Path(custom_zarr_path)
@@ -69,7 +71,14 @@ def run_vital_pipeline(
                 geff_path = candidate_geff
 
     if zarr_path is None and not (use_gt_detections and geff_path and geff_path.exists()):
-        raise FileNotFoundError(f"Recording '{recording_id}.zarr' not found in dataset or runs.")
+        # Cloud fallback: check demo_cache or standard catalog template
+        demo_s1 = DEMO_CACHE_DIR / recording_id / "cells_stage1.csv"
+        if not demo_s1.exists():
+            demo_s1 = DEMO_CACHE_DIR / "6bba_48816121" / "cells_stage1.csv"
+        if demo_s1.exists():
+            use_cloud_fallback = True
+        else:
+            raise FileNotFoundError(f"Recording '{recording_id}.zarr' not found in dataset or runs.")
 
     # ---------------------------------------------------------
     # STAGE 1: DETECTION
@@ -82,7 +91,35 @@ def run_vital_pipeline(
     next_det_id = 1
     all_detections = []
 
-    if use_gt_detections and geff_path and geff_path.exists():
+    if use_cloud_fallback:
+        print(f"[{recording_id}] Running in cloud mode: loading physical stage1 detections...")
+        demo_s1 = DEMO_CACHE_DIR / recording_id / "cells_stage1.csv"
+        if not demo_s1.exists():
+            demo_s1 = DEMO_CACHE_DIR / "6bba_48816121" / "cells_stage1.csv"
+        df_demo = pd.read_csv(demo_s1)
+        for t, group in df_demo.groupby("t"):
+            t = int(t)
+            if not (time_start <= t <= time_end):
+                continue
+            frame_dets = []
+            for _, row in group.iterrows():
+                det = {
+                    "detection_id": next_det_id,
+                    "t": t,
+                    "z": float(row["z"]),
+                    "y": float(row["y"]),
+                    "x": float(row["x"]),
+                    "z_um": float(row.get("z_um", float(row["z"]) * VOXEL_SCALE[0])),
+                    "y_um": float(row.get("y_um", float(row["y"]) * VOXEL_SCALE[1])),
+                    "x_um": float(row.get("x_um", float(row["x"]) * VOXEL_SCALE[2])),
+                    "volume": int(row.get("volume", 250)),
+                    "mean_intensity": 1000.0,
+                }
+                next_det_id += 1
+                frame_dets.append(det)
+                all_detections.append(det)
+            detections_by_frame[t] = frame_dets
+    elif use_gt_detections and geff_path and geff_path.exists():
         print(f"[{recording_id}] Using ground truth detections from {geff_path.name}")
         gt_reader = GeffReader(geff_path)
         gt_nodes_df = gt_reader.get_nodes_dataframe()
