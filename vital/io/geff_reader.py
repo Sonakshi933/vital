@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
 import networkx as nx
 import pandas as pd
-import geff
+try:
+    import geff
+except ImportError:
+    geff = None
 
 from vital.config import SCALE_Z, SCALE_Y, SCALE_X
 

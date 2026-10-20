@@ -154,9 +154,20 @@ def get_specimens():
 @app.route("/api/available-recordings")
 def get_available_recordings():
     """Catalog of all dataset recordings available for live pipeline execution."""
-    train_zarrs = sorted([p.stem for p in TRAIN_DIR.glob("*.zarr")])
-    test_zarrs = sorted([p.stem for p in TEST_DIR.glob("*.zarr")])
+    train_zarrs = sorted([p.stem for p in TRAIN_DIR.glob("*.zarr")]) if TRAIN_DIR.exists() else []
+    test_zarrs = sorted([p.stem for p in TEST_DIR.glob("*.zarr")]) if TEST_DIR.exists() else []
     
+    # In cloud environments (e.g. Render), load the complete 200+ catalog from data_catalog.json
+    catalog_path = WORKSPACE_ROOT / "vital" / "data_catalog.json"
+    if not train_zarrs and not test_zarrs and catalog_path.exists():
+        try:
+            with open(catalog_path, "r") as f:
+                cat = json.load(f)
+                train_zarrs = cat.get("train", [])
+                test_zarrs = cat.get("test", [])
+        except Exception as e:
+            print(f"Error loading data catalog: {e}")
+
     # Detailed processed runs from vital/runs
     processed_runs = []
     processed_ids = set()
@@ -192,11 +203,11 @@ def get_available_recordings():
         if z in DEMO_RECORDINGS:
             continue
         is_processed = z in processed_ids
-        has_gt = (TRAIN_DIR / f"{z}.geff").exists()
+        has_gt = (TRAIN_DIR / f"{z}.geff").exists() if TRAIN_DIR.exists() else True
         items.append({
             "id": z,
             "split": "train",
-            "label": f"train: {z} {'(✅ Processed)' if is_processed else '(Ready to Process)'}",
+            "label": f"train: {z} {'(✅ Processed)' if is_processed else '(CZ Biohub Catalog)'}",
             "has_gt": has_gt,
             "is_processed": is_processed,
         })
@@ -208,7 +219,7 @@ def get_available_recordings():
         items.append({
             "id": z,
             "split": "test",
-            "label": f"test: {z} {'(✅ Processed)' if is_processed else '(Ready to Process)'}",
+            "label": f"test: {z} {'(✅ Processed)' if is_processed else '(CZ Biohub Test)'}",
             "has_gt": False,
             "is_processed": is_processed,
         })
