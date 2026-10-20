@@ -213,6 +213,17 @@ def get_available_recordings():
             "is_processed": is_processed,
         })
 
+    if not items:
+        # Fallback when running in cloud without the 83GB raw dataset
+        for z in DEMO_RECORDINGS:
+            items.append({
+                "id": z,
+                "split": "demo",
+                "label": f"demo: {z} (Demo Showcase Recording)",
+                "has_gt": True,
+                "is_processed": True,
+            })
+
     return jsonify(clean_val({
         "total_available": len(items),
         "processed_runs": processed_runs,
@@ -703,11 +714,39 @@ def get_specimen_lineage(rec_id: str):
 # -----------------------------------------------------------------------------
 # MICROSCOPY SLICE & MIP IMAGE RENDERING
 # -----------------------------------------------------------------------------
+def extract_frame_from_video(video_path: Path, t: int) -> Optional[bytes]:
+    """Extract frame t from embryo_timelapse_raw.mp4 as PNG bytes (used in cloud when raw 83GB zarr is absent)."""
+    if not video_path.exists():
+        return None
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(video_path))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(99, t)))
+        ret, frame = cap.read()
+        cap.release()
+        if ret and frame is not None:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb).resize((768, 768), resample=Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception as e:
+        print(f"Error extracting frame from video {video_path}: {e}")
+    return None
+
+
 @app.route("/api/specimen/<rec_id>/frame-mip/<int:t>")
 def get_frame_mip(rec_id: str, t: int):
     """Render 2D Maximum Intensity Projection (MIP) for frame t as PNG."""
     reader = get_zarr_reader(rec_id)
     if reader is None:
+        rec_dir = get_specimen_dir(rec_id)
+        video_path = rec_dir / "embryo_timelapse_raw.mp4"
+        if not video_path.exists():
+            video_path = DEMO_CACHE_DIR / rec_id / "embryo_timelapse_raw.mp4"
+        png_data = extract_frame_from_video(video_path, t)
+        if png_data:
+            return Response(png_data, mimetype="image/png")
         abort(404, f"Zarr recording {rec_id} not found")
 
     try:
@@ -736,6 +775,13 @@ def get_frame_slice(rec_id: str, t: int, z: int):
     """Render optical depth section slice (z) for frame t as PNG."""
     reader = get_zarr_reader(rec_id)
     if reader is None:
+        rec_dir = get_specimen_dir(rec_id)
+        video_path = rec_dir / "embryo_timelapse_raw.mp4"
+        if not video_path.exists():
+            video_path = DEMO_CACHE_DIR / rec_id / "embryo_timelapse_raw.mp4"
+        png_data = extract_frame_from_video(video_path, t)
+        if png_data:
+            return Response(png_data, mimetype="image/png")
         abort(404, f"Zarr recording {rec_id} not found")
 
     try:
@@ -852,6 +898,9 @@ def download_file(rec_id: str, file_type: str):
             stage3_df.to_csv(s3_path, index=False)
         return send_file(s3_path, as_attachment=True, download_name=f"{rec_id}_lineage_stage3.csv", mimetype="text/csv")
     elif file_type == "geff":
+        geff_zip = rec_dir / "lineage_output.geff.zip"
+        if geff_zip.exists():
+            return send_file(geff_zip, as_attachment=True, download_name=f"{rec_id}_lineage_output.geff.zip", mimetype="application/zip")
         geff_path = rec_dir / "lineage_output.geff"
         if geff_path.is_dir():
             buf = io.BytesIO()
@@ -869,5 +918,6 @@ def download_file(rec_id: str, file_type: str):
 
 
 if __name__ == "__main__":
-    print("[V.I.T.A.L] Starting Standalone Scientific Web Server on http://localhost:5000 ...")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    print(f"[V.I.T.A.L] Starting Standalone Scientific Web Server on port {port} ...")
+    app.run(host="0.0.0.0", port=port, debug=False)
